@@ -3161,6 +3161,38 @@ namespace LCompilers {
         ASR::ttype_t* key_asr_type,
         ASR::ttype_t* value_asr_type,
         std::map<std::string, std::map<std::string, int>>& name2memidx) {
+        
+        // NOTE: This works for OptimizedLinearProbing
+
+        /**
+         * C++ equivalent:
+         * 
+         * old_capacity = capacity;
+         * capacity = 2 * capacity + 1;
+         * 
+         * idx = 0;
+         * while( old_capacity > idx ) {
+         *     is_key_set = (key_mask[idx] != 0) && (key_mask[idx] != 3);
+         *     if( is_key_set ) {
+         *         key = key_list[idx];
+         *         key_hash = get_key_hash(); // with new capacity
+         *         resolve_collision();       // with new_el_list; modifies pos
+         *         new_key_list[pos] = key;
+         *         linear_prob_happened = key_hash != pos;
+         *         set_max_2 = linear_prob_happened ? 2 : 1;
+         *         new_key_mask[key_hash] = set_max_2;
+         *         new_key_mask[pos] = set_max_2;
+         *     }
+         *     idx += 1;
+         * }
+         * 
+         * free(key_list);
+         * free(key_mask);
+         * key_list = new_key_list;
+         * key_mask = new_key_mask;
+         * 
+         */
+
         llvm::Value* capacity_ptr = get_pointer_to_capacity(dict);
         llvm::Value* old_capacity = LLVM::CreateLoad(*builder, capacity_ptr);
         llvm::Value* capacity = builder->CreateMul(old_capacity, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context),
@@ -3221,9 +3253,12 @@ namespace LCompilers {
             llvm::BasicBlock *thenBB = llvm::BasicBlock::Create(context, "then", fn);
             llvm::BasicBlock *elseBB = llvm::BasicBlock::Create(context, "else");
             llvm::BasicBlock *mergeBB = llvm::BasicBlock::Create(context, "ifcont");
-            llvm::Value* is_key_set = LLVM::CreateLoad(*builder, llvm_utils->create_ptr_gep(key_mask, idx));
-            is_key_set = builder->CreateICmpNE(is_key_set,
+            llvm::Value* key_mask_value = LLVM::CreateLoad(*builder,
+                                            llvm_utils->create_ptr_gep(key_mask, idx));
+            llvm::Value* is_key_set = builder->CreateICmpNE(key_mask_value,
                 llvm::ConstantInt::get(llvm::Type::getInt8Ty(context), llvm::APInt(8, 0)));
+            is_key_set = builder->CreateAnd(is_key_set, builder->CreateICmpNE(key_mask_value,
+                llvm::ConstantInt::get(llvm::Type::getInt8Ty(context), llvm::APInt(8, 3))));
             builder->CreateCondBr(is_key_set, thenBB, elseBB);
             builder->SetInsertPoint(thenBB);
             {
